@@ -21,6 +21,39 @@ const ELK_OPTS = {
 
 const elk = new ELK();
 
+function estimateTextWidth(text, pxSize) {
+	if (!text) return 0;
+	const avgGlyph = pxSize * 0.62;
+	return Math.ceil(String(text).length * avgGlyph);
+}
+
+function nodeDimensions(name, def, isCompound) {
+	if (isCompound) {
+		const minWidth = 220;
+		const labelWidth = estimateTextWidth(name, 13) + 40;
+		return {
+			width: Math.max(minWidth, labelWidth),
+			height: 160,
+		};
+	}
+
+	const entry = def?.entry
+		? Array.isArray(def.entry)
+			? def.entry
+			: [def.entry]
+		: [];
+	const subtitle = entry.length ? entry.join(', ') : '';
+
+	const minWidth = 160;
+	const labelWidth = estimateTextWidth(name, 13) + 32;
+	const subtitleWidth = subtitle ? estimateTextWidth(subtitle, 10) + 28 : 0;
+
+	return {
+		width: Math.max(minWidth, labelWidth, subtitleWidth),
+		height: subtitle ? 58 : 44,
+	};
+}
+
 function colorFor(name, def) {
 	const lo = name.toLowerCase();
 	if (lo.includes('error')) return PALETTE.red;
@@ -71,7 +104,10 @@ function getStatesAtPath(rootStates, parentId) {
 	return curStates;
 }
 
-function resolveTargetId(target, parentId, rootStates, localStates) {
+function resolveTargetId(target, parentId, tree, localStates, stateIdIndex) {
+	const rootStates = tree?.states;
+	if (!rootStates) return null;
+
 	if (typeof target !== 'string') return null;
 	let cleaned = target.trim();
 	if (!cleaned) return null;
@@ -80,13 +116,25 @@ function resolveTargetId(target, parentId, rootStates, localStates) {
 		cleaned = cleaned.slice(1);
 	}
 
-	if (cleaned.includes('__')) {
-		return cleaned;
+	if (cleaned.includes('.')) {
+		const parts = cleaned.split('.').filter(Boolean);
+		if (parts.length > 1) {
+			const alias = stateIdIndex?.get(parts[0]);
+			if (alias !== undefined) {
+				parts.shift();
+				const baseParts = alias ? alias.split('__') : [];
+				return [...baseParts, ...parts].join('__');
+			}
+
+			if (tree?.id && parts[0] === tree.id) {
+				parts.shift();
+			}
+		}
+		return parts.join('__');
 	}
 
-	if (cleaned.includes('.')) {
-		const dotted = cleaned.replace(/\./g, '__');
-		return dotted;
+	if (cleaned.includes('__')) {
+		return cleaned;
 	}
 
 	if (
@@ -137,19 +185,52 @@ function extractTargets(rawTarget) {
 	return [];
 }
 
-function buildElkGraph(states, parentId, rootStates) {
+function edgeContainerIdFor(sourceId, targetId) {
+	const sourceParent = sourceId.split('__').slice(0, -1);
+	const targetParent = targetId.split('__').slice(0, -1);
+	const n = Math.min(sourceParent.length, targetParent.length);
+
+	let i = 0;
+	while (i < n && sourceParent[i] === targetParent[i]) {
+		i += 1;
+	}
+
+	return sourceParent.slice(0, i).join('__');
+}
+
+function pushEdge(edgeBuckets, containerId, edge) {
+	if (!edgeBuckets.has(containerId)) {
+		edgeBuckets.set(containerId, []);
+	}
+	edgeBuckets.get(containerId).push(edge);
+}
+
+function buildStateIdIndex(states, parentId, stateIdIndex) {
+	for (const [name, def] of Object.entries(states)) {
+		if (!def) continue;
+		const nodeId = parentId ? `${parentId}__${name}` : name;
+		if (typeof def.id === 'string' && def.id.trim()) {
+			stateIdIndex.set(def.id.trim(), nodeId);
+		}
+		if (def.states && Object.keys(def.states).length) {
+			buildStateIdIndex(def.states, nodeId, stateIdIndex);
+		}
+	}
+}
+
+function buildElkGraph(states, parentId, tree, edgeBuckets, stateIdIndex) {
 	const elkNodes = [];
-	const elkEdges = [];
 
 	for (const [name, def] of Object.entries(states)) {
 		if (!def) continue;
 		const id = parentId ? `${parentId}__${name}` : name;
 		const isCompound = !!(def.states && Object.keys(def.states).length);
+		const dims = nodeDimensions(name, def, isCompound);
 
 		const elkNode = {
 			id,
-			width: isCompound ? 220 : 160,
-			height: isCompound ? 160 : def.entry ? 58 : 44,
+			width: dims.width,
+			height: dims.height,
 			labels: [{ text: name }],
 			layoutOptions: isCompound ? { ...ELK_OPTS } : {},
 		};
@@ -158,10 +239,14 @@ function buildElkGraph(states, parentId, rootStates) {
 			const { children, edges: innerEdges } = buildElkGraph(
 				def.states,
 				id,
-				rootStates
+				tree,
+				edgeBuckets,
+				stateIdIndex
 			);
 			elkNode.children = children;
-			elkNode.edges = innerEdges;
+			if (innerEdges.length) {
+				elkNode.edges = innerEdges;
+			}
 		}
 
 		elkNodes.push(elkNode);
@@ -173,23 +258,31 @@ function buildElkGraph(states, parentId, rootStates) {
 					const resolvedTarget = resolveTargetId(
 						target,
 						parentId,
-						rootStates,
-						states
+						tree,
+						states,
+						stateIdIndex
 					);
 					if (!resolvedTarget) continue;
-					elkEdges.push({
+					const edge = {
 						id: `${id}->${resolvedTarget}__${event}`,
 						sources: [id],
 						targets: [resolvedTarget],
 						labels: [{ text: event }],
 						_event: event,
-					});
+					};
+
+					const containerId = edgeContainerIdFor(id, resolvedTarget);
+					pushEdge(edgeBuckets, containerId, edge);
 				}
 			}
 		}
 	}
 
-	return { children: elkNodes, edges: elkEdges };
+	const currentContainerId = parentId ?? '';
+	return {
+		children: elkNodes,
+		edges: edgeBuckets.get(currentContainerId) ?? [],
+	};
 }
 
 function buildEdgePath(edge, parentNode) {
@@ -218,6 +311,19 @@ function getEdgeLabelPoint(edge, parentNode) {
 	const ox = parentNode._absX ?? 0;
 	const oy = parentNode._absY ?? 0;
 	if (!edge.sections?.length) return { x: ox, y: oy };
+
+	const bendPoints = [];
+	for (const section of edge.sections) {
+		for (const bp of section.bendPoints || []) {
+			bendPoints.push({ x: bp.x + ox, y: bp.y + oy });
+		}
+	}
+
+	// For orthogonal routing, place labels on a bend (corner) instead of
+	// on straight segments so event names are anchored at 90-degree turns.
+	if (bendPoints.length) {
+		return bendPoints[Math.floor(bendPoints.length / 2)];
+	}
 
 	const polyline = [];
 	for (const section of edge.sections) {
@@ -306,7 +412,7 @@ function flattenElkResult(
 				? def.entry
 				: [def.entry]
 			: [];
-		const subtitle = entry.length ? entry.join(', ').slice(0, 32) : '';
+		const subtitle = entry.length ? entry.join(', ') : '';
 
 		accumNodes.push({
 			id: rawId,
@@ -362,7 +468,7 @@ function flattenElkResult(
 				id: edge.id,
 				sourceId: srcId,
 				targetId: dstId,
-				label: event.length > 18 ? event.slice(0, 16) + '…' : event,
+				label: event,
 				labelX,
 				labelY,
 				labelW: event.length * 6.5,
@@ -420,10 +526,19 @@ export function useStateTreeViewer() {
 		layoutRunning.value = true;
 
 		try {
+			const edgeBuckets = new Map();
+			const stateIdIndex = new Map();
+			if (typeof tree.id === 'string' && tree.id.trim()) {
+				stateIdIndex.set(tree.id.trim(), '');
+			}
+			buildStateIdIndex(tree.states, null, stateIdIndex);
+
 			const { children, edges: elkEdges } = buildElkGraph(
 				tree.states,
 				null,
-				tree.states
+				tree,
+				edgeBuckets,
+				stateIdIndex
 			);
 
 			const graph = {

@@ -191,83 +191,109 @@ const zoomGroupEl = ref(null);
 const isPanning = ref(false);
 const canvasBg = computed(() => '#ffffff');
 
-const LABEL_HEIGHT = 14;
-const LABEL_X_GAP = 8;
-const LABEL_Y_GAP = 4;
-const LABEL_OFFSETS = [
-	{ x: 0, y: 0 },
-	{ x: 0, y: 10 },
-	{ x: 0, y: -10 },
-	{ x: 12, y: 0 },
-	{ x: -12, y: 0 },
-	{ x: 12, y: 10 },
-	{ x: -12, y: 10 },
-	{ x: 12, y: -10 },
-	{ x: -12, y: -10 },
-	{ x: 0, y: 18 },
-	{ x: 0, y: -18 },
+const EDGE_COLORS = [
+	'#005f73',
+	'#9b2226',
+	'#3a0ca3',
+	'#1d3557',
+	'#2a9d8f',
+	'#b5179e',
+	'#006d77',
+	'#7f4f24',
+	'#023e8a',
+	'#6a040f',
+	'#2b2d42',
+	'#386641',
 ];
 
-function edgeColorFromId(id) {
-	const key = String(id || 'edge');
-	let hash = 2166136261;
-	for (let i = 0; i < key.length; i += 1) {
-		hash ^= key.charCodeAt(i);
-		hash = Math.imul(hash, 16777619);
+function areEdgesNear(a, b) {
+	if (!a?.label || !b?.label) return false;
+	const dx = Math.abs((a.labelX ?? 0) - (b.labelX ?? 0));
+	const dy = Math.abs((a.labelY ?? 0) - (b.labelY ?? 0));
+	return dx < 96 && dy < 28;
+}
+
+function shareEndpoint(a, b) {
+	if (!a || !b) return false;
+	return (
+		a.sourceId === b.sourceId ||
+		a.sourceId === b.targetId ||
+		a.targetId === b.sourceId ||
+		a.targetId === b.targetId
+	);
+}
+
+function assignEdgeColors(edges) {
+	const neighbors = new Map();
+	for (const edge of edges) {
+		neighbors.set(edge.id, new Set());
 	}
 
-	const hue = Math.abs(hash) % 360;
-	const sat = 62 + (Math.abs(hash >> 3) % 18);
-	const light = 38 + (Math.abs(hash >> 7) % 14);
-	return `hsl(${hue} ${sat}% ${light}%)`;
+	for (let i = 0; i < edges.length; i += 1) {
+		for (let j = i + 1; j < edges.length; j += 1) {
+			const a = edges[i];
+			const b = edges[j];
+			if (!shareEndpoint(a, b) && !areEdgesNear(a, b)) continue;
+			neighbors.get(a.id).add(b.id);
+			neighbors.get(b.id).add(a.id);
+		}
+	}
+
+	const order = [...edges].sort((a, b) => {
+		const da = neighbors.get(a.id)?.size ?? 0;
+		const db = neighbors.get(b.id)?.size ?? 0;
+		return db - da;
+	});
+
+	const colorById = new Map();
+	const usage = new Array(EDGE_COLORS.length).fill(0);
+
+	for (const edge of order) {
+		const taken = new Set();
+		for (const neighborId of neighbors.get(edge.id) ?? []) {
+			const c = colorById.get(neighborId);
+			if (Number.isInteger(c)) taken.add(c);
+		}
+
+		let bestIndex = -1;
+		let bestScore = Number.POSITIVE_INFINITY;
+		for (let i = 0; i < EDGE_COLORS.length; i += 1) {
+			const penalty = taken.has(i) ? 1000 : 0;
+			const score = penalty + usage[i];
+			if (score < bestScore) {
+				bestScore = score;
+				bestIndex = i;
+			}
+		}
+
+		const picked = bestIndex >= 0 ? bestIndex : 0;
+		colorById.set(edge.id, picked);
+		usage[picked] += 1;
+	}
+
+	return colorById;
 }
 
 const adjustedVisibleEdges = computed(() => {
-	const placed = [];
-
-	function hasCollision(x, y, width) {
-		return placed.some((p) => {
-			const overlapX =
-				Math.abs(x - p.x) < (width + p.w) / 2 + LABEL_X_GAP;
-			const overlapY = Math.abs(y - p.y) < LABEL_HEIGHT + LABEL_Y_GAP;
-			return overlapX && overlapY;
-		});
-	}
+	const colorById = assignEdgeColors(props.visibleEdges);
 
 	return props.visibleEdges.map((edge) => {
 		if (!edge?.label) {
+			const colorIndex = colorById.get(edge?.id) ?? 0;
 			return {
 				...edge,
-				renderColor: edgeColorFromId(edge?.id),
+				renderColor: EDGE_COLORS[colorIndex],
 				renderLabelX: edge?.labelX ?? 0,
 				renderLabelY: edge?.labelY ?? 0,
 			};
 		}
 
-		const baseX = Number.isFinite(edge.labelX) ? edge.labelX : 0;
-		const baseY = Number.isFinite(edge.labelY) ? edge.labelY : 0;
-		const width = Number.isFinite(edge.labelW)
-			? Math.max(8, edge.labelW)
-			: 8;
-
-		let x = baseX;
-		let y = baseY;
-
-		for (const offset of LABEL_OFFSETS) {
-			const candidateX = baseX + offset.x;
-			const candidateY = baseY + offset.y;
-			if (!hasCollision(candidateX, candidateY, width)) {
-				x = candidateX;
-				y = candidateY;
-				break;
-			}
-		}
-
-		placed.push({ x, y, w: width });
+		const x = Number.isFinite(edge.labelX) ? edge.labelX : 0;
+		const y = Number.isFinite(edge.labelY) ? edge.labelY : 0;
 
 		return {
 			...edge,
-			renderColor: edgeColorFromId(edge.id),
+			renderColor: EDGE_COLORS[colorById.get(edge.id) ?? 0],
 			renderLabelX: x,
 			renderLabelY: y,
 		};

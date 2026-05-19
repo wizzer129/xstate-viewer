@@ -62,9 +62,10 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue';
 import { EditorView, keymap, placeholder } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
+import { javascript } from '@codemirror/lang-javascript';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { bracketMatching } from '@codemirror/language';
 import { autocompletion } from '@codemirror/autocomplete';
@@ -100,20 +101,52 @@ const emit = defineEmits(['update:rawInput', 'parse']);
 
 const editorEl = ref(null);
 let editorView = null;
+const languageCompartment = new Compartment();
+let currentLanguage = null;
+
+function detectLanguageMode(text) {
+	const trimmed = text.trim();
+	if (!trimmed) return 'javascript';
+
+	try {
+		JSON.parse(trimmed);
+		return 'json';
+	} catch {
+		return 'javascript';
+	}
+}
+
+function languageExtension(mode) {
+	return mode === 'json' ? json() : javascript();
+}
+
+function syncLanguageMode(docText) {
+	if (!editorView) return;
+	const next = detectLanguageMode(docText);
+	if (next === currentLanguage) return;
+	currentLanguage = next;
+	editorView.dispatch({
+		effects: languageCompartment.reconfigure(languageExtension(next)),
+	});
+}
 
 onMounted(() => {
 	const updateListener = EditorView.updateListener.of((update) => {
 		if (update.docChanged) {
-			emit('update:rawInput', update.state.doc.toString());
+			const nextText = update.state.doc.toString();
+			emit('update:rawInput', nextText);
+			syncLanguageMode(nextText);
 		}
 	});
+
+	currentLanguage = detectLanguageMode(props.rawInput);
 
 	const state = EditorState.create({
 		doc: props.rawInput,
 		extensions: [
 			history(),
 			keymap.of([...defaultKeymap, ...historyKeymap]),
-			json(),
+			languageCompartment.of(languageExtension(currentLanguage)),
 			oneDark,
 			bracketMatching(),
 			autocompletion(),
@@ -138,6 +171,7 @@ watch(
 			editorView.dispatch({
 				changes: { from: 0, to: current.length, insert: val },
 			});
+			syncLanguageMode(val);
 		}
 	}
 );
@@ -196,7 +230,7 @@ function startDrag(e) {
 
 .code-editor :deep(.cm-editor) {
 	height: 100%;
-	font-size: 18px;
+	font-size: 11px;
 }
 
 .code-editor :deep(.cm-scroller) {

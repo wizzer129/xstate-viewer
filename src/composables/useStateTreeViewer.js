@@ -13,7 +13,11 @@ const ELK_OPTS = {
 	'elk.algorithm': 'layered',
 	'elk.direction': 'DOWN',
 	'elk.spacing.nodeNode': '40',
+	'elk.spacing.edgeEdge': '24',
+	'elk.spacing.edgeNode': '16',
 	'elk.layered.spacing.nodeNodeBetweenLayers': '60',
+	'elk.layered.spacing.edgeEdgeBetweenLayers': '28',
+	'elk.layered.spacing.edgeNodeBetweenLayers': '24',
 	'elk.edgeRouting': 'ORTHOGONAL',
 	'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
 	'elk.padding': '[top=36,left=20,bottom=20,right=20]',
@@ -319,10 +323,23 @@ function getEdgeLabelPoint(edge, parentNode) {
 		}
 	}
 
-	// For orthogonal routing, place labels on a bend (corner) instead of
-	// on straight segments so event names are anchored at 90-degree turns.
+	// For orthogonal routing, prioritize early corners so labels appear near
+	// the first turn in the edge path (first bend, then second bend).
 	if (bendPoints.length) {
-		return bendPoints[Math.floor(bendPoints.length / 2)];
+		const first = bendPoints[0];
+		const second = bendPoints[1];
+
+		const firstStart = edge.sections[0]?.startPoint;
+		if (firstStart && second) {
+			const startX = firstStart.x + ox;
+			const startY = firstStart.y + oy;
+			const distFromStart = Math.hypot(first.x - startX, first.y - startY);
+
+			// If the first corner hugs the source node, use second corner.
+			if (distFromStart < 24) return second;
+		}
+
+		return first;
 	}
 
 	const polyline = [];

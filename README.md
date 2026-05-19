@@ -68,6 +68,7 @@ bun build
 - `bun build-only`
 - `bun pages:build`
 - `bun pages:deploy`
+- `bun deploy`
 - `bun lint`
 - `bun lint:fix`
 - `bun mcp`
@@ -83,6 +84,9 @@ This project is configured for Cloudflare Pages static deployment.
 - Build command: `bun run pages:build`
 - Build output directory: `dist`
 - Root directory: `/` (repo root)
+- Deploy command: leave empty for Git-based Pages builds
+
+Do not use `npx wrangler deploy` for Cloudflare Pages. If you use a deploy command, use `npx wrangler pages deploy dist --project-name xstate-visualizer`.
 
 ### CLI Deploy
 

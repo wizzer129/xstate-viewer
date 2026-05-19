@@ -10,6 +10,7 @@
 		"build-only": "vite build",
 		"pages:build": "vite build",
 		"pages:deploy": "wrangler pages deploy dist",
+		"deploy": "wrangler pages deploy dist --project-name xstate-visualizer",
 		"lint": "eslint",
 		"lint:fix": "eslint --fix",
 		"format": "prettier --write .",

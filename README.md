@@ -66,10 +66,32 @@ bun build
 - `bun build`
 - `bun preview`
 - `bun build-only`
+- `bun pages:build`
+- `bun pages:deploy`
 - `bun lint`
 - `bun lint:fix`
 - `bun mcp`
 - `bun mcp:revert`
+
+## ☁️ Cloudflare Pages
+
+This project is configured for Cloudflare Pages static deployment.
+
+### Dashboard Configuration
+
+- Framework preset: `Vite`
+- Build command: `bun run pages:build`
+- Build output directory: `dist`
+- Root directory: `/` (repo root)
+
+### CLI Deploy
+
+```bash
+bun run pages:build
+bun run pages:deploy -- --project-name <your-pages-project>
+```
+
+The `--project-name` value should match your Cloudflare Pages project name.
 
 ## 💪 Support Vuetify Development
 
